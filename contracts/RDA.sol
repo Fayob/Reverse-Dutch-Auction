@@ -3,6 +3,20 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+error TRANSFER_FAILED();
+error INSUFFICIENT_BALANCE();
+error INVALID_ADDRESS();
+error PERIOD_MUST_BE_HIGHER_THAN_ZERO();
+error AMOUNT_MUST_BE_HIGHER_THAN_END_AMOUNT();
+error AMOUNT_MUST_BE_HIGHER_THAN_ZERO();
+error AUCTION_HAS_ENDED();
+error CANNOT_BUY_AUCTION_OWNED_BY_YOU();
+error AUCTION_COMPLETED();
+error INACTIVE_AUCTION();
+error AUCTION_FINALIZED();
+error ONLY_SELLER_CANCEL();
+error INVALID_ID();
+
 contract ReverseDutchAuctionSwap {
     bool private locked;
     
@@ -27,6 +41,12 @@ contract ReverseDutchAuctionSwap {
 
     Auction[] public auctions;
 
+    event AuctionFinalized(
+        uint256 indexed auctionId,
+        address buyer,
+        uint256 price
+    );
+
     event AuctionCreated(
         uint256 indexed auctionId,
         address seller,
@@ -35,12 +55,6 @@ contract ReverseDutchAuctionSwap {
         uint256 startPrice,
         uint256 endPrice,
         uint256 duration
-    );
-
-    event AuctionFinalized(
-        uint256 indexed auctionId,
-        address buyer,
-        uint256 price
     );
 
     event AuctionCancelled(
@@ -55,24 +69,16 @@ contract ReverseDutchAuctionSwap {
         uint256 endPrice,
         uint256 duration
     ) external returns (uint256) {
-        require(tokenAmount > 0, "Token amount must be greater than 0");
-        require(startPrice > endPrice, "Start price must be greater than end price");
-        require(duration > 0, "Duration must be greater than 0");
-        require(tokenAddress != address(0), "Invalid token address");
+        if(tokenAmount == 0) revert AMOUNT_MUST_BE_HIGHER_THAN_ZERO();
+        if(startPrice <= endPrice) revert AMOUNT_MUST_BE_HIGHER_THAN_END_AMOUNT();
+        if(duration == 0) revert PERIOD_MUST_BE_HIGHER_THAN_ZERO();
+        if(tokenAddress == address(0)) revert INVALID_ADDRESS();
 
         IERC20 token = IERC20(tokenAddress);
         
-        // Check allowance before transfer
-        require(
-            token.allowance(msg.sender, address(this)) >= tokenAmount,
-            "Insufficient token allowance"
-        );
+        if(token.allowance(msg.sender, address(this)) < tokenAmount) revert INSUFFICIENT_BALANCE();
 
-        // Transfer tokens to contract
-        require(
-            token.transferFrom(msg.sender, address(this), tokenAmount),
-            "Token transfer failed"
-        );
+        if(!token.transferFrom(msg.sender, address(this), tokenAmount)) revert TRANSFER_FAILED();
 
         uint256 auctionId = auctions.length;
         auctions.push(
@@ -102,8 +108,8 @@ contract ReverseDutchAuctionSwap {
         return auctionId;
     }
 
-    function getCurrentPrice(uint256 auctionId) public view returns (uint256) {
-        require(auctionId < auctions.length, "Invalid auction ID");
+    function getPrice(uint256 auctionId) public view returns (uint256) {
+        if(auctionId >= auctions.length) revert INVALID_ID();
         
         Auction storage auction = auctions[auctionId];
         if (!auction.active || block.timestamp >= auction.startTime + auction.duration) {
@@ -116,31 +122,25 @@ contract ReverseDutchAuctionSwap {
         return auction.startPrice - reduction;
     }
 
-    function executeSwap(uint256 auctionId) external payable noReentrant {
-        require(auctionId < auctions.length, "Invalid auction ID");
+    function swap(uint256 auctionId) external payable noReentrant {
+        if(auctionId >= auctions.length) revert INVALID_ID();
         
         Auction storage auction = auctions[auctionId];
-        require(auction.active, "Auction is not active");
-        require(!auction.finalized, "Auction already finalized");
-        require(
-            block.timestamp < auction.startTime + auction.duration,
-            "Auction has ended"
-        );
-        require(msg.sender != auction.seller, "Seller cannot buy their own auction");
+        if(!auction.active) revert INACTIVE_AUCTION();
+        if(auction.finalized) revert AUCTION_COMPLETED();
+        if(block.timestamp >= auction.startTime + auction.duration) revert AUCTION_HAS_ENDED();
+        if(msg.sender == auction.seller) revert CANNOT_BUY_AUCTION_OWNED_BY_YOU();
 
-        uint256 currentPrice = getCurrentPrice(auctionId);
-        require(msg.value >= currentPrice, "Insufficient payment");
+        uint256 currentPrice = getPrice(auctionId);
+        if(msg.value < currentPrice) revert INSUFFICIENT_BALANCE();
 
         auction.active = false;
         auction.finalized = true;
 
-        // Transfer tokens to buyer
         IERC20(auction.tokenAddress).transfer(msg.sender, auction.tokenAmount);
 
-        // Transfer ETH to seller
         payable(auction.seller).transfer(currentPrice);
 
-        // Refund excess payment if any
         uint256 excess = msg.value - currentPrice;
         if (excess > 0) {
             payable(msg.sender).transfer(excess);
@@ -150,17 +150,16 @@ contract ReverseDutchAuctionSwap {
     }
 
     function cancelAuction(uint256 auctionId) external {
-        require(auctionId < auctions.length, "Invalid auction ID");
+        if(auctionId >= auctions.length) revert INVALID_ID();
         
         Auction storage auction = auctions[auctionId];
-        require(msg.sender == auction.seller, "Only seller can cancel");
-        require(auction.active, "Auction not active");
-        require(!auction.finalized, "Auction already finalized");
+        if(msg.sender != auction.seller) revert ONLY_SELLER_CANCEL();
+        if(!auction.active) revert INACTIVE_AUCTION();
+        if(auction.finalized) revert AUCTION_FINALIZED();
 
         auction.active = false;
         auction.finalized = true;
 
-        // Return tokens to seller
         IERC20(auction.tokenAddress).transfer(auction.seller, auction.tokenAmount);
         
         emit AuctionCancelled(auctionId, msg.sender);

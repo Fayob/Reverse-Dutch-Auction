@@ -25,11 +25,11 @@ async function main() {
     await auction.connect(seller).startAuction();
     console.log("Auction started by seller");
 
-    console.log("Simulating swap...");
+    console.log("------------------- Swap -------------------");
     await ethers.provider.send("evm_increaseTime", [1200]);
     await ethers.provider.send("evm_mine");
     
-    const currentPrice = await auction.getCurrentPrice();
+    const currentPrice = await auction.getPrice(0);
     console.log("Current price after 1200 seconds:", ethers.formatEther(currentPrice));
 
     await token.connect(buyer).approve(auction.target, currentPrice);
