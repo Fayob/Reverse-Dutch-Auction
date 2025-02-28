@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 error TRANSFER_FAILED();
 error INSUFFICIENT_BALANCE();
+error INSUFFICIENT_ALLOWANCE();
 error INVALID_ADDRESS();
 error PERIOD_MUST_BE_HIGHER_THAN_ZERO();
 error AMOUNT_MUST_BE_HIGHER_THAN_END_AMOUNT();
@@ -76,7 +77,7 @@ contract ReverseDutchAuctionSwap {
 
         IERC20 token = IERC20(tokenAddress);
         
-        if(token.allowance(msg.sender, address(this)) < tokenAmount) revert INSUFFICIENT_BALANCE();
+        if(token.allowance(msg.sender, address(this)) < tokenAmount) revert INSUFFICIENT_ALLOWANCE();
 
         if(!token.transferFrom(msg.sender, address(this), tokenAmount)) revert TRANSFER_FAILED();
 
